@@ -177,13 +177,57 @@ function buildServer() {
   return server;
 }
 
+async function getLikes() {
+  try {
+    return JSON.parse(await readFile("_data/likes.json"));
+  } catch {
+    return {};
+  }
+}
+
+async function incrementLikes(slug) {
+  const likes = await getLikes();
+  likes[slug] = (likes[slug] || 0) + 1;
+  await writeFile("_data/likes.json", JSON.stringify(likes, null, 2), `Like: ${slug}`);
+  return likes[slug];
+}
+
 const app = express();
 app.use(express.json({ limit: "5mb" }));
+
+// Public, unauthenticated REST endpoints for the blog's own like button —
+// separate from /mcp, which is Claude's connector. CORS-open since the
+// blog itself (a different origin, GitHub Pages) calls these from a
+// visitor's browser.
+app.use("/api", (req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
+app.get("/api/likes/:slug", async (req, res) => {
+  try {
+    const likes = await getLikes();
+    res.json({ slug: req.params.slug, count: likes[req.params.slug] || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/likes/:slug", async (req, res) => {
+  try {
+    const count = await incrementLikes(req.params.slug);
+    res.json({ slug: req.params.slug, count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get("/", (_req, res) => res.send("Blog MCP server is running."));
 
 app.use((req, res, next) => {
-  if (req.path === "/") return next();
+  if (req.path === "/" || req.path.startsWith("/api/")) return next();
   if (AUTH_TOKEN) {
     const auth = req.headers.authorization || "";
     if (auth !== `Bearer ${AUTH_TOKEN}`) {
